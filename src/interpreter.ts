@@ -5,6 +5,8 @@ import { Degrees, Vector2d, Segment } from "./geometry";
 import { Animation, Frame } from "./frames";
 import { Stroke } from "./scene";
 
+import * as MainLoop from "mainloop.js" // FIXME: we don't want you here!
+
 export type State = {
     node: Node;
     value?: any;
@@ -44,6 +46,7 @@ type NativeInterpreter = {
     setProperty(scope: any, name: string, value: any, desc?: PropertyDescriptor);
     createNativeFunction(fn: Function): any;
     createPrimitive(value: any): any;
+    createObject(value: any): any;
 };
 interface InitFunc {
     (interpreter: NativeInterpreter, scope: any): any;
@@ -231,10 +234,24 @@ export class Interpreter {
         });
 
         set("ask", (question: string) => {
+
+            MainLoop.stop(); // FIXME: find another way to make this sync, please!
+
             let input = prompt(question);
+
+            MainLoop.start(); // FIXME:
+
             return wrap(input);
         });
-        // TODO: print
+
+        // FIXME: no document.getElementById here!
+        set("print", (...words: any[]) => {
+            document.getElementById("out").innerHTML += words.join(" ");
+        });
+        set("println", (...lines: any[]) => {
+            document.getElementById("out").innerHTML += lines.join("\n");
+        });
+
         set("wait", (seconds: number) => {
             this.animation = new Animation(seconds * 80, (_, keyFrame: Frame) => keyFrame); // FIXME: Magic Number!
         });
@@ -290,8 +307,14 @@ export class Interpreter {
     }
 
     private step(): State {
-        if (this.interpreter.step()) {
-            return this.currentState;
+        let recoverState = this.currentState;
+        try {
+            if (this.interpreter.step()) {
+                return this.currentState;
+            }
+        } catch (e) {
+            e.state = recoverState;
+            throw e;
         }
         return null;
     }

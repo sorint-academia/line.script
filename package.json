@@ -4,9 +4,8 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "build": "webpack",
-    "watch": "webpack --progress --watch",
-    "serve": "webpack-dev-server"
+    "build": "webpack --config webpack.prod.ts",
+    "dev": "webpack-dev-server --config webpack.dev.ts"
   },
   "keywords": [],
   "author": "Marco Bolis @sorintlab",
@@ -14,6 +13,7 @@
   "devDependencies": {
     "@types/node": "^8.5.5",
     "@types/webpack": "^3.8.2",
+    "@types/webpack-merge": "^4.1.2",
     "css-loader": "^0.28.9",
     "license-banner-webpack-plugin": "^1.0.0",
     "style-loader": "^0.20.1",
@@ -22,7 +22,8 @@
     "tsconfig-paths-webpack-plugin": "^1.4.0",
     "typescript": "^2.6.2",
     "webpack": "^3.10.0",
-    "webpack-dev-server": "2.9.7"
+    "webpack-dev-server": "2.9.7",
+    "webpack-merge": "^4.1.2"
   },
   "dependencies": {
     "@types/acorn": "^4.0.3",

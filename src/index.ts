@@ -169,10 +169,13 @@ let editor = CodeMirror.fromTextArea(txtCode, {
     mode: "javascript",
     tabSize: 2,
     extraKeys: {
-        Tab: (cm) => {
+        "Tab": (cm) => {
             var spaces = Array(cm.getOption("indentUnit") + 1).join(" ");
             cm.replaceSelection(spaces);
-        }
+        },
+        "Ctrl-Alt-Enter": () => setState("step-fwd"),
+        "Ctrl-Enter": () => setState("playing"),
+        "Shift-Ctrl-Enter": () => setState("fast-fwd")
     }
 });
 
@@ -211,35 +214,37 @@ const MAX_LOOP_COUNT = 10000;
 
 let interpreter: Interpreter;
 function getNextAnimation(loopCount = 0): Animation {
-    let instruction: Instruction = interpreter.stepToNextInstruction();
+    try {
+        let instruction: Instruction = interpreter.stepToNextInstruction();
 
-    if (instruction) {
-        if (chkTrace.checked) {
-            clearEditorMarks();
-            let start = editor.findPosH(CodeMirror.Pos(0, 0), instruction.node.start, "char", true);
-            let end = editor.findPosH(CodeMirror.Pos(0, 0), instruction.node.end, "char", true);
-            editor.getDoc().markText(start, end, { css: "background: rgba(128,255,128,0.4)" })
+        if (instruction) {
+            if (chkTrace.checked) {
+                clearEditorMarks();
+                let start = editor.findPosH(CodeMirror.Pos(0, 0), instruction.node.start, "char", true);
+                let end = editor.findPosH(CodeMirror.Pos(0, 0), instruction.node.end, "char", true);
+                editor.getDoc().markText(start, end, { css: "background: rgba(128,255,128,0.4)" })
 
-            return studio.setAnimation(instruction.animation || new Animation(10, (_, keyFrame) => keyFrame)); // FIXME:
+                return studio.setAnimation(instruction.animation || new Animation(10, (_, keyFrame) => keyFrame)); // FIXME:
 
-        } else {
-            if (instruction.animation) {
-                return studio.setAnimation(instruction.animation);
             } else {
-                if (loopCount < MAX_LOOP_COUNT) {
-                    return getNextAnimation(loopCount + 1);
+                if (instruction.animation) {
+                    return studio.setAnimation(instruction.animation);
                 } else {
-                    clearEditorMarks();
-                    let start = editor.findPosH(CodeMirror.Pos(0, 0), instruction.node.start, "char", true);
-                    let end = editor.findPosH(CodeMirror.Pos(0, 0), instruction.node.end, "char", true);
-                    editor.getDoc().markText(start, end, { css: "background: rgba(255,128,128,0.4)" })
-
-                    txtOut.textContent = "<span style=color:red>WARNING: Possible infinite loop!</span>\n";
-
-                    return studio.setAnimation(new Animation(state === "fast-fwd" ? 20000 : 20, (_, keyFrame) => keyFrame));
+                    if (loopCount < MAX_LOOP_COUNT) {
+                        return getNextAnimation(loopCount + 1);
+                    } else {
+                        clearEditorMarks();
+                        markError(instruction.node.start, instruction.node.end);
+                        txtOut.innerHTML = "<span style=color:red>WARNING: Possible infinite loop!</span>\n";
+                        return studio.setAnimation(new Animation(state === "fast-fwd" ? 20000 : 20, (_, keyFrame) => keyFrame));
+                    }
                 }
             }
         }
+    } catch (err) {
+        setState("done");
+        markError(err.state.node.start, err.state.node.end, err.message);
+        throw err;
     }
 
     return studio.setAnimation(null);
@@ -247,7 +252,15 @@ function getNextAnimation(loopCount = 0): Animation {
 
 function clearEditorMarks() {
     editor.getDoc().getAllMarks().forEach(mark => mark.clear());
-    txtOut.textContent = "";
+}
+function markError(start: number, end: number, message?: string) {
+    let startPos = editor.findPosH(CodeMirror.Pos(0, 0), start, "char", true);
+    let endPos = editor.findPosH(CodeMirror.Pos(0, 0), end, "char", true);
+    editor.getDoc().markText(startPos, endPos, { css: "background: rgba(255,128,128,0.4)" })
+
+    if (message) {
+        txtOut.innerHTML += `<span style=color:red>${message}</span>\n`;
+    }
 }
 
 setupMainLoop();
@@ -259,6 +272,7 @@ function setState(nextState: TransportState) {
             show(btnSfwd, btnFfwd, btnPlay);
 
             clearEditorMarks();
+            txtOut.textContent = "";
             studio.reset();
             break;
 
@@ -267,12 +281,7 @@ function setState(nextState: TransportState) {
             show(btnSfwd, btnPause, btnFfwd, btnStop);
             disable(btnSfwd);
 
-            if (state === "ready" || state === "done") {
-                editor.save();
-                interpreter = new Interpreter(txtCode.value);
-
-                studio.reset();
-            }
+            ensureRunning();
 
             studio.animate();
             break;
@@ -280,12 +289,7 @@ function setState(nextState: TransportState) {
         case "step-fwd":
             hide(btnSfwd, btnPause, btnPlay, btnFfwd, btnStop);
 
-            if (state === "ready" || state === "done") {
-                editor.save();
-                interpreter = new Interpreter(txtCode.value);
-
-                studio.reset();
-            }
+            ensureRunning();
 
             studio.animate();
 
@@ -309,12 +313,7 @@ function setState(nextState: TransportState) {
             show(btnSfwd, btnPlay, btnPause, btnStop);
             disable(btnSfwd);
 
-            if (state === "ready" || state === "done") {
-                editor.save();
-                interpreter = new Interpreter(txtCode.value);
-
-                studio.reset();
-            }
+            ensureRunning();
 
             studio.animate();
             break;
@@ -330,6 +329,28 @@ function setState(nextState: TransportState) {
     }
 
     state = nextState;
+}
+
+function ensureRunning() {
+    if (state === "ready" || state === "done") {
+        editor.save();
+        try {
+            interpreter = new Interpreter(txtCode.value);
+        } catch (err) {
+
+            setState("done");
+
+            let message = /(.*)\((\d+):(\d+)\)\s*$/.exec(err.message);
+            let startPos = CodeMirror.Pos(+message[2], +message[3]);
+            let token = editor.getTokenAt(startPos);
+            markError(token.start, token.end, message[1] + `'${token.string}'`);
+
+            throw err;
+        }
+
+        txtOut.textContent = "";
+        studio.reset();
+    }
 }
 
 function disable(...elements: HTMLButtonElement[]) {
